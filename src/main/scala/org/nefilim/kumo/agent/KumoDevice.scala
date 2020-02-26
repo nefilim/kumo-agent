@@ -8,6 +8,7 @@ import org.json4s.jackson.Serialization
 import org.json4s.jackson.JsonMethods._
 import sttp.client.okhttp.OkHttpFutureBackend
 import sttp.client._
+import sttp.model.StatusCode
 
 import scala.concurrent.Future
 import scala.concurrent.duration._
@@ -137,12 +138,16 @@ class KumoDevice private (
       case Success(f) =>
         f.map { r =>
           r.body match {
-            case Right(b) =>
+            case Right(b) if r.code == StatusCode.Ok =>
               Try {
                 val json = parse(b) \ "r" \ "indoorUnit" \ "status"
                 context.log.debug(s"JSON ${pretty(render(json))}")
                 json.extract[InternalStatus]
+              }.recoverWith {
+                case t => Failure(new Exception(s"failed to parse json [${b}]", t))
               }
+            case Right(_) =>
+              Failure(new Exception(s"received a HTTP status code other than Ok: ${r.code}, ignoring data"))
             case Left(e) =>
               Failure(new Exception(e))
           }
