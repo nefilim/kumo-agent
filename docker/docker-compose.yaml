@@ -5,5 +5,5 @@ services:
     container_name: kumo-agent
     network_mode: host
     volumes:
-       - '../src/main/resources/application.conf:/opt/kumo-agent/conf/application.conf'
+       - 'application.conf:/opt/docker/conf/application.conf'
     restart: unless-stopped
