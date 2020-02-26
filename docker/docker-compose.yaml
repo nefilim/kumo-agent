@@ -1,0 +1,9 @@
+version: '3.0'
+services:
+  kumo-agent:
+    image: nefilim/kumo-agent:latest
+    container_name: kumo-agent
+    network_mode: host
+    volumes:
+       - '../src/main/resources/application.conf:/opt/kumo-agent/conf/application.conf'
+    restart: unless-stopped
