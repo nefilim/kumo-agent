@@ -11,7 +11,9 @@ import net.ceedubs.ficus.readers.ArbitraryTypeReader._
 object Server extends LazyLogging {
 
   case class KumoAgentConfig(devices: List[KumoDeviceConfig], mqtt: KumoMQTTConfig)
-  case class KumoDeviceConfig(ip: String, statusKey: String, mqttStateTopic: String)
+  case class KumoDeviceConfig(ip: String, apiConfig: KumoDeviceAPIConfig, mqtt: KumoDeviceMQTTConfig)
+  case class KumoDeviceAPIConfig(statusKey: String, modeHeatKey: String, modeCoolKey: String, modeOffKey: String)
+  case class KumoDeviceMQTTConfig(stateTopic: String, commandTopic: String)
   case class KumoMQTTConfig(broker: String)
 
   def main(args: Array[String]) {

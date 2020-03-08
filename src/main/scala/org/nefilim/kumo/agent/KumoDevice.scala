@@ -6,6 +6,7 @@ import com.typesafe.scalalogging.LazyLogging
 import org.json4s._
 import org.json4s.jackson.Serialization
 import org.json4s.jackson.JsonMethods._
+import org.nefilim.kumo.agent.Server.KumoDeviceAPIConfig
 import sttp.client.okhttp.OkHttpFutureBackend
 import sttp.client._
 import sttp.model.StatusCode
@@ -24,7 +25,8 @@ object KumoDevice extends LazyLogging {
   final private case class PollStatusFailure(t: Throwable) extends Command
   final case class GetStatus(replyTo: ActorRef[Result]) extends Command
   final case class UpdateHeatSetpoint(spHeat: Double, replyTo: ActorRef[Result]) extends Command
-  final case object TurnOn extends Command
+  final case object ModeHeat extends Command
+  final case object ModeCool extends Command
   final case object TurnOff extends Command
   final case class CurrentStatus(status: Status) extends Result
 
@@ -70,11 +72,11 @@ object KumoDevice extends LazyLogging {
     def toStatus = Status(StatusMode.parseMode(mode), roomTemp, spHeat, spCool, defrost)
   }
 
-  def apply(ip: String, statusKey: String, coordinator: ActorRef[DeviceCoordinator.Command]): Behavior[Command] = {
+  def apply(ip: String, apiConfig: KumoDeviceAPIConfig, coordinator: ActorRef[DeviceCoordinator.Command]): Behavior[Command] = {
     logger.info(s"Creating Behavior for KumoDevice at ${ip}")
     Behaviors.setup { context =>
       Behaviors.withTimers { timers =>
-        new KumoDevice(ip, statusKey, coordinator, context, timers).start()
+        new KumoDevice(ip, apiConfig, coordinator, context, timers).start()
       }
     }
   }
@@ -82,7 +84,7 @@ object KumoDevice extends LazyLogging {
 
 class KumoDevice private (
     ip: String,
-    statusKey: String,
+    apiConfig: KumoDeviceAPIConfig,
     coordinator: ActorRef[DeviceCoordinator.Command],
     context: ActorContext[KumoDevice.Command],
     timers: TimerScheduler[KumoDevice.Command]) {
@@ -112,7 +114,7 @@ class KumoDevice private (
         context.log.warn(s"failed to get Kumo status: [$t]")
         Behaviors.same
       case PollStatusResult(newStatus) =>
-        if (!status.contains(newStatus)) {
+        if (status.map(_.toStatus.isOn).exists(current => current != newStatus.toStatus.isOn)) {
           context.log.info(s"sending updated status ${newStatus.toStatus}")
           coordinator ! DeviceCoordinator.HandleKumoStatus(newStatus.toStatus, context.self)
         }
@@ -120,6 +122,18 @@ class KumoDevice private (
       case GetStatus(replyTo) if status.isDefined =>
         context.log.debug(s"Getting status for device at ${ip}, internal status: $status status: ${status.get.toStatus}")
         replyTo ! CurrentStatus(status.get.toStatus)
+        Behaviors.same
+      case TurnOff =>
+        context.log.info(s"Setting Mode to Off for ${ip}")
+        setMode("off", apiConfig.modeOffKey)
+        Behaviors.same
+      case ModeHeat =>
+        context.log.info(s"Setting Mode to Heat for ${ip}")
+        setMode("heat", apiConfig.modeHeatKey)
+        Behaviors.same
+      case ModeCool =>
+        context.log.info(s"Setting Mode to Cool for ${ip}")
+        setMode("cool", apiConfig.modeCoolKey)
         Behaviors.same
     }
   }
@@ -132,7 +146,7 @@ class KumoDevice private (
     Try(basicRequest
       .body("""{"c":{"indoorUnit":{"status":{}}}}""")
       .contentType("application/json")
-      .put(uri"http://$ip/api?m=$statusKey")
+      .put(uri"http://$ip/api?m=${apiConfig.statusKey}")
       .send()) match {
 
       case Success(f) =>
@@ -148,6 +162,29 @@ class KumoDevice private (
               }
             case Right(_) =>
               Failure(new Exception(s"received a HTTP status code other than Ok: ${r.code}, ignoring data"))
+            case Left(e) =>
+              Failure(new Exception(e))
+          }
+        }
+      case Failure(f) =>
+        Future.successful(Failure(f))
+    }
+  }
+
+  private def setMode(mode: String, apiKey: String): Future[Try[_]] = {
+    Try(basicRequest
+      .body(s"""{"c":{"indoorUnit":{"status":{"mode":"$mode"}}}}""")
+      .contentType("application/json")
+      .put(uri"http://$ip/api?m=$apiKey")
+      .send()) match {
+
+      case Success(f) =>
+        f.map { r =>
+          r.body match {
+            case Right(_) if r.code == StatusCode.Ok =>
+              Success()
+            case Right(_) =>
+              Failure(new Exception(s"received a HTTP status code other than Ok: ${r.code} when setting mode $mode, ignoring data"))
             case Left(e) =>
               Failure(new Exception(e))
           }
